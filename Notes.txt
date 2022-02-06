@@ -1,0 +1,715 @@
+---------------------------------------------------------------------------------------------------------------------------
+chapter:Activity - Installing Python, MRJob, and Nano
+---------------------------------------------------------------------------------------------------------------------------
+	------------------------------------------
+	to connect to virtual horton works sandbox 
+	------------------------------------------
+		hdp user name and password : maria_dev
+		ssh maria_dev@127.0.0.1 -p2222
+		
+	------------------------------------------
+	To login as root
+	------------------------------------------
+		use the following command	
+			su root 
+			
+		For the first time, the initial password is going to be "hadoop"
+		Then it will prompt to change the password
+			root password: Gourijan2022
+
+python3 RatingsBreakdown.py -r hadoop --hadoop-streaming-jar /usr/hdp/current/hadoop-mapreduce-client/hadoop-streaming.jar u.data
+
+python3 RatingsBreakdownMovieCount.py -r hadoop --hadoop-streaming-jar /usr/hdp/current/hadoop-mapreduce-client/hadoop-streaming.jar u.data
+
+ambari dashboard: http://localhost:1080/splash.html
+---------------------------------------------------------------------------------------------------------------------------
+Chapter: Introducing Ambari
+---------------------------------------------------------------------------------------------------------------------------
+	to reset ambari admin password: ambrari-admin-password-reset
+	
+		sometime the above command may cause issue. please execute the following commands to make sure the scripts are there where they are supposed to be
+			[root@sandbox tmp]# which ambari-server
+			/usr/sbin/ambari-server
+
+			[root@sandbox tmp]# which ambari-agent
+			/usr/sbin/ambari-agent
+
+			[root@sandbox tmp]# which ambari-admin-password-reset
+			/usr/sbin/ambari-admin-password-reset
+		
+	ambari admin password: Gourijan2022
+---------------------------------------------------------------------------------------------------------------------------
+Chapter: Activity – Finding the Old Five-Star Movies with Pig
+---------------------------------------------------------------------------------------------------------------------------
+
+-----------------------------------------
+	Dataset source:
+		from grouplens.org/datasets/movielens we have downloaded 100000 ratings dataset. 
+
+-----------------------------------------
+
+ratings = LOAD '/user/maria_dev/ml-100k/u.data' AS (userID:int, movieID:int, rating:int, ratingTime:int);
+
+DUMP ratings;
+
+metadata = LOAD '/user/maria_dev/ml-100k/u.item' USING PigStorage('|') AS (movieID:int, movieTitle:chararray, releaseDate:chararray, videoRelease:chararray, imdbLink:chararray);
+
+DUMP metadata;
+
+nameLookup = FOREACH metadata GENERATE movieID, movieTitle, ToUnixTime(ToDate(releaseDate, 'dd-MMM-yyyy')) AS releaseTime;
+
+DUMP nameLookup;
+
+ratingsByMovie = GROUP ratings BY movieID; 
+
+DUMP ratingsByMovie;
+ 
+avgRatings = FOREACH ratingsByMovie GENERATE group AS movieID, AVG(ratings.rating) AS avgRating;
+
+DUMP avgRatings;
+
+DESCRIBE ratings;
+DESCRIBE ratingsByMovie;
+DESCRIBE avgRatings;
+
+fiveStarMovies = FILTER avgRatings BY avgRating > 4.0; 
+
+DUMP fiveStarMovies;
+
+DESCRIBE fiveStarMovies; 
+DESCRIBE nameLookup;
+
+fiveStarsWithData = JOIN fiveStarMovies BY movieID, nameLookup BY movieID;
+DESCRIBE fiveStarsWithData;
+DUMP fiveStarsWithData;
+
+fiveStarsWithDataLessColumn = FOREACH fiveStarsWithData GENERATE fiveStarMovies::movieID AS movieID, fiveStarMovies::avgRating AS avgRating, nameLookup::movieTitle AS movieTitle, nameLookup::releaseTime as releaseTime;
+
+DESCRIBE fiveStarsWithDataLessColumn;
+DUMP fiveStarsWithDataLessColumn;
+
+oldestFiveStarMovies = ORDER fiveStarsWithData BY nameLookup::releaseTime;
+
+DESCRIBE oldestFiveStarMovies;
+DUMP oldestFiveStarMovies;
+
+-------------------------------------------------
+Observation: 	The above query takes a couple of minutes to run. Even with a fast machine, this will take some time to complete. 
+				there are ways to speed up this process. 
+-------------------------------------------------
+
+How to speed it up? 
+	Pig does not have to use mapreduce at all, it can use Tez. Tez uses a directed acyclic graph to find the most optimal path to do things. 
+	This can be done, by checking on "Execute on Tez" checkbox and executing it there. 
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Chapter: More Pig Latin 		Start date: 14 Jan 2022
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	basics: https://pig.apache.org/docs/r0.17.0/basic.html
+	
+	-----------------------------------------
+	Things that we can do to a relation
+	-----------------------------------------
+		LOAD  				->	for reading 
+		STORE 				->	for writing 
+			example: STORE ratings INTO '/user/maria_dev/ml-100k/outratings' USING PigStorage(':');
+			we can store in JSON, PARQUET as well. 
+			outratings is a directory, underwhich the final file can be found. 
+			
+		DUMP				->	equivalent of select. 
+		FILTER				->	to filter records, equivalent to where 
+		DISTINCT			->	to get distinct values 
+		FOREACH/GENERATE	->	to process each record, useful when using aggregate functions like AVG etc. 
+		MAPREDUCE			->
+		STREAM				->	 
+		SAMPLE				->	to get random samples.
+		JOIN				->	to join 2 tables, produces tuples
+		GROUP				->	aggregating various records associated with a single key.  
+		COGROUP				->	variation of join, instead of creating tuple, it creates separate tuple for each key. Structured data
+		CROSS				->	cartesian product. example: when finding product similarity. 
+		CUBE				->	takes more than 2 columns, and finds cross relationship
+		ORDER				->	orders records. 
+		RANK				->	similar to rank function. assigns a number to each record in ordered list. 
+		LIMIT				->	to restrict the displayed records to a certain number
+		UNION				->	similar to union in sql. 
+		SPLIT				->	takes a relation and splits it up. 
+
+	-----------------------
+	DIAGNOSTICS
+	-----------------------	
+		DESCRIBE			->	Pig prints out the details of a given relation. 
+		EXPLAIN				->	Similar to a SQL Explain Plan. Insight into how Pig intends to execute each query. 
+		ILLUSTRATE			->	Picks sample from each relation and what Pig is doing with each piece of data as it goes. 
+	
+	-----------------------
+	UDF	:	User Defined Function
+	-----------------------
+		REGISTER			->	this says, "I have a jar file that contains UDF, please import it in".
+		DEFINE				->	assigns names to those functions. 
+		IMPORT				->	used to import macros into other pig scripts. 
+	
+	--------------------------------
+	Some other functions and loaders
+	--------------------------------
+		AVG					->	averages
+		CONCAT				->	concatenation
+		COUNT				->	
+		MAX					->	
+		MIN					->	
+		SIZE				->	
+		SUM					->	adds it all up 
+		
+		These are storage classes
+			PigStorage			->	assumes some sort of delimiter. 
+			TextLoader			->	more basic than PigStorage, loads 1 line of input and output data per Row. 
+			JsonLoader			->	Structured Format for Json
+			AvroStorage			->	For serialization and deserialization. 
+			ParquetLoader		->	Popular column oriented dataformat. 
+			OrcStorage			->	
+			HBaseStorage		->	
+	
+	Further reference: 	Programming Pig Oreilly Book. 
+						Hadoop the definitive guide. 
+						
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Chapter: 	Exercise - Finding the Most-Rated One-Star Movie 
+			&
+			Pig Challenge - Comparing Results							Start date: 14 Jan 2022
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------	
+	Objective	:	Pig Script to find the most popular bad movies. 
+	
+	Pig Code: 
+	
+		ratings = LOAD '/user/maria_dev/ml-100k/u.data' AS (userID:int, movieID:int, rating:int, ratingTime:int);
+		metadata = LOAD '/user/maria_dev/ml-100k/u.item' USING PigStorage('|') AS (movieID:int, movieTitle:chararray, releaseDate:chararray, videoRelease:chararray, imdbLink:chararray);
+		nameLookup = FOREACH metadata GENERATE movieID, movieTitle, ToUnixTime(ToDate(releaseDate, 'dd-MMM-yyyy')) AS releaseTime;
+		ratingsByMovie = GROUP ratings BY movieID; 
+		avgRatings = FOREACH ratingsByMovie GENERATE group AS movieID, AVG(ratings.rating) AS avgRating, COUNT(ratings.rating) AS numRatings;
+		badMovies = FILTER avgRatings BY avgRating < 2.0; 
+		namedBadMovies = JOIN badMovies BY movieID, nameLookup BY movieID;
+		finalResults = FOREACH namedBadMovies GENERATE nameLookup::movieTitle AS movieName, badMovies::avgRating AS avgRating, badMovies::numRatings AS numRatings;
+		finalResultsSorted = ORDER finalResults BY numRatings DESC;
+		DUMP finalResultsSorted;
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Chapter:	Why Spark?														Start Date	:	14 Jan 2022
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	Apache Spark 
+	-------------
+		1. 	A fast and general engine for large scale data processing. 
+		2. 	API for Python, Java, or Scala. 
+		3. 	scalable. 
+		4. 	Spark is a memory based solution. It tries to retain as much as possible in RAM. 
+		5. 	Directed acyclic graph optimizes workflow. 
+		6. 	100x faster than MapReduce in memory, or 10x faster on disk. 
+		7. 	Built around RDD concept: Resilient Distributed Dataset
+		8. 	Latest version: 3.2.0, this came out on October 13, 2021
+		9. 	there are many libraries built on top of Spark Core. they are as follows: 
+				a. spark streaming
+					Instead of batch processing, we can process continuous data like time series and analyse it. 
+				b. spark sql 
+					SQL interface to spark. 
+				c. MLLib 
+					machine learning library. 
+				d. GraphX 
+					helps implement and analyse graphical datastructure. 
+			
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Chapter:	The Resilient Distributed Datasets (RDD)								Start Date	:	14 Jan 2022
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------	
+	Resilient Distributed Datasets (RDD)
+		Abstraction of a lot of stuff happening under hood. 
+		
+		How to create RDD? 
+			Driver program creates "Spark Context". This is responsible for creating RDDs. The spark shell creates a sc object for us. 
+			Eg: 
+				nums = parallelize([1,2,3,4]) #This will create a RDD which contains [1,2,3,4] 
+				or from loading a file from AWS S3, or HDFS etc. 
+				or from HiveContext 
+				or from any other databased, or structured files that Hadoop supports. 
+		
+		Now, we have the RDD. What do we do with it? 
+			We can perform the following operations: 
+				map 
+					1:1 relationship
+					Example: 
+						rdd = sc.parallelize([1,2,3,4]) 
+						squaredRDD = rdd.map(lambda x: x*x)
+						
+						This yields [1,4,9,16]
+				flatmap 
+					any relationship, where input lines may or maynot result 1 or more resultant lines in RDD
+				filter 
+					we can take stuff out of RDD. 
+				distinct 
+					unique values in RDD
+				sample 
+					sample randomly 
+				union, intersection, subtract, cartesian 
+					combine in RDD 
+				
+		What all actions can we do on RDD ? 
+			collect 
+				get some value in/from the RDD
+			count 
+				count in the RDD
+			countByValue 
+				count a certain value in the RDD
+			take
+				few rows of the RDD
+			top 
+				top few rows of the RDD
+			reduce 
+		
+		Lazy evaluation 
+			Nothing actually happens, until one of these functions are called. 
+				collect
+				count
+				countByValue
+				take
+				top 
+				reduce 
+			Thats when spark starts working backward and goes through the graph(chain of dependency) that we have built so far and tries to figure out a way to get the value 
+			in the fastest way possible. This might be confusing while debugging. 
+	
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Chapter:	Activity – Finding the Movie with the Lowest Average Rating with the Resilient Distributed Datasets (RDD) Start Date	:	14 Jan 2022
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------		
+			08:35
+			login as admin. 
+			all services -> Spark2 -> Configs
+										In here, we want to change the log levels of spark. By default it is very verbose. 
+										-> Advanced spark2-log4j-properties
+											->	Change "log4j.rootCategory=INFO" to "log4j.rootCategory=ERROR"
+												-> to make sure all takes effect, we need to restart the services. 
+			
+			Files View 	-> 
+						User	-> 
+								maria_dev	->
+											ml-100k
+											make sure u.data and u.item is there. 
+											
+			ssh to maria_dev 
+				create directory ml-100k
+				cd ml-100k
+				wget http://media.sundog-soft.com/hadoop/ml-100k/u.item
+				cd ..
+				wget http://media.sundog-soft.com/hadoop/Spark.zip
+				
+				spark-submit LowestRatedMovieSpark.py
+			
+			Use the following command to download the files locally
+				 curl http://media.sundog-soft.com/hadoop/Spark.zip -O Spark.zip
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Datasets and Spark 2.0				
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	Spark SQL, Dataframes and Datasets
+	
+		Extends RDD to a Dataframes object
+		like pandas dataframe and can run sql queries. 
+		schema is more efficient storage. 
+		
+		Datasets
+			in spark 2.0, dataframe = dataset of row obejects
+		
+		Shell acces:
+			Spark exposes a JDBC/ODBC server 
+			Start with sbin/start-thriftserver.sh 
+			listens on 10000 port by default
+			connect using bin/beeline -u jdbc:hive2://localhost:10000
+			
+			We now have a SQL Shell to Spark SQL 
+			
+			We can create new tables, or query existing table that were cached using 
+				hiveCtx.cacheTable("tableName")
+			
+		User-defined Functions 
+			from pyspark.sql.types import IntegerTypes 
+			hiveCtx.registerFunction("square",lambda x: x*x, IntegerType())
+			df = hiveCtx.sql("SELECT square('someNumericFiled') FROM tableName")
+		
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Activity – Finding the movie with the Lowest Average Rating with DataFrames
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	a spark session needs to be creted, and this session will be running through the script. 
+	
+	run LowestRatedMovieDataFrame.py to simulate working with Spark 2.0 
+	
+	to run Spark 2.0, we need to setup the following
+	export SPARK_MAJOR_VERSION=2
+	
+	spark-submit LowestRatedMovieDataFrame.py
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Activity – Recommending a Movie with Spark's Machine Learning Library (MLLib)
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	Here for data has been manufactered for userId 0 in file u.data. 
+	3 lines have been added for userId 0 on u.data. 
+	
+	0	50		5	881250949
+	0	172		5	881250949
+	0	133		1	881250949
+	
+	spark-submit MovieRecommendationsALS.py
+	
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Exercise – Filtering the Lowest-Rated Movies by Number of Ratings
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	Modify the 1 or both of the scripts to only consider movies with at least 10 ratings. 
+	
+	Hint: 
+		RDD's have a filter function. 
+			
+			filter(lambda x: x[1][1] > 10)
+			Explanation: 
+				In the earlier statement, this was said
+				# Reduce to (movieID, (sumOfRatings, totalRatings))
+				ratingTotalsAndCount = movieRatings.reduceByKey(lambda movie1, movie2: ( movie1[0] + movie2[0], movie1[1] + movie2[1] ) )
+				
+				So, we can see, the tuple is like this (movieID, (sumOfRatings, totalRatings)). Therefore 
+				[0] is movieID
+				[1] is (sumOfRatings, totalRatings)
+					[1][0] is sumOfRatings
+					[1][1] is totalRatings
+				
+				Therefore, x[1][1] > 10 means, RDD lines where totalRatings > 10 . 
+
+		Dataframes also have a filter function. 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+What is Hive?
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------		
+		Integrating Hadoop Cluster with MySQL Database. 
+		
+		---------------
+		Hive 
+		---------------
+		MapReduce | Tez
+		---------------
+		Hadoop YARN
+		---------------
+		
+		Hive translates SQL Queries to MapReduce or Tez Jobs on your cluster. 
+		easy OLAP Queries 
+		highly optimized 
+		highly extensible 
+			User defined functions 
+			thrift server 
+			jdbc/odbc driver 
+		
+		
+		Why not to use Hive? 
+			high latency? not for OLTP 
+			stores data denormalized 
+				because under the hood its not a rdbms 
+			SQL is limited in what it can do 
+				PIG, Spark can accomplish more 
+			No Transactions 
+			No record level updates, inserts, deletes 
+			
+		Variation of SQL used by Hive is called HiveQL 
+		Similar to MySQL 
+		there some extensions: like view. 
+		Allows us to specify how structured data is stored and partitioned. 
+		
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Activity – Using Hive to Find the Most Popular Movie
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+		Sign in as maria_dev
+		Go to Hive view
+			---------
+			Queries: 
+			---------
+			drop table ratings;
+			
+			to upload data from u.data into tables. 
+				go to "Upload Table" utility. 
+				Change the separator to ASCII 9, i.e. Tab. 
+				Choose u.data from ml-100k from local file system. 
+				
+				Change table name to "ratings" 
+				Change column names 
+				column1 -> userID 
+				column2	-> movieID 
+				column3	-> rating 
+				column4	-> epochseconds
+				the data types stay as is. 
+				
+				then upload the table. (this might take a while) 
+			
+			Next, we will upload u.item file. This is a pipe separated file. So, we need to work on the utility again. 
+				In the utility, we need to change the separator to pipe (|) , i.e. ASCII 124
+				Choose u.item from ml-100k from local file system. 
+				
+				Change table name to "names"
+				Change column names 
+				column1 -> movieID 
+				column2	-> title 
+				rest of the columns will stay as is. 
+				the data types stay as is. 
+				
+				then upload the table. (this might take a while) 
+		
+		Views in Hive 
+		------------
+		Break up complicated queries into views in Hive 
+		------------
+			CREATE VIEW IF NOT EXISTS topMovieIDs AS 
+			SELECT movieID, count(movieID) as ratingCount 
+			FROM ratings 
+			GROUP BY movieID
+			ORDER BY ratingCount DESC;
+			
+			SELECT n.title, ratingCount
+			FROM topMovieIDs t JOIN names n ON t.movieID = n.movieID;
+			
+		After the work is done, we need to clear the database of the view 
+			DROP VIEW topMovieIDs;
+			
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+How Hive Works?
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	Basic Concept of Hive: 
+		Schema on Read (In a real RDBMS, we need to mention the schema before we write on it and create a table)
+		Hive maintains a metastore that imparts a structure you define on the unstructured data that is stored on HDFS etc. 
+			
+			CREATE TABLE ratings 
+			(
+				userID 	INT, 
+				movieID INT,
+				rating	INT, 
+				time	INT
+			)
+			ROW FORMAT DELIMITED 
+			FIELDS TERMINATED BY '\t'
+			STORED AS TEXTFILE; 
+			
+			LOAD DATA LOCAL INPATH '${env:HOME}/ml-100k/u.data'
+			OVERWRITE INTO TABLE ratings;
+	
+	Where does the data live? 
+		LOAD DATA 
+			A LOAD DATA moves data from a distributed filesystem into Hive. 
+		
+		LOAD DATA LOCAL 
+			COPIES data from your local filesystem into Hive 
+		
+		Managed vs External tables 
+			
+			CREATE EXTERNAL TABLE IF NOT EXISTS ratings 
+			(
+				userID 	INT, 
+				movieID INT,
+				rating	INT, 
+				time	INT
+			)
+			ROW FORMAT DELIMITED FIELDS TERMINATED BY '\t'
+			LOCATION '/data/ml-100k/u.data';
+		
+			For external tables the data stays intact once the table is dropped 
+	
+	Partitioning 
+		
+		You can store your data in partitioned subdirectories 
+			Huge optimization if your queries are only on certain partitions. 
+			
+			CREATE TABLE customers
+			(
+				name	STRING, 
+				address	STRUCT<street:STRING, city:STRING, state:STRING, zip:INT>
+			)
+			PARTITIONED BY (country STRING);
+			
+			it treates country as a column, but its not quite a column under the hood. 
+			the country "column" becomes a part of the subdirectory under where Hive stores the data 
+			For e.g: 
+				../customers/country=CA/
+				../customers/country=GB/
+			
+			if there are more such "columns" in this partition, then the directory will be chained. If province is included in the subdirectory
+				../customers/country=CA/province=Alberta
+				../customers/country=GB/province=Surrey
+			
+	
+	Ways to use Hive 
+		
+		Interactive via hive> prompt / Command line interface (CLI) 
+		Saved query files 
+			- hive -f /somepath/queries.sql 
+		Through Ambari / Hue 
+		Through JDBC/ODBC server 
+		Through Thrift service 
+			But remember, Hive is not suitable for OLTP (We have HBase to handle webservice calls)
+		Via Oozie 
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Exercise – Using Hive to Find the Movie with the Highest Average Rating
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	Query:
+		CREATE VIEW IF NOT EXISTS topMovieIDs AS 
+		SELECT r.movieID, avg(r.rating) as avgRating,count(r.rating) as countRating
+		FROM ratings r  
+		GROUP BY r.movieID
+		HAVING countRating > 10
+		ORDER BY avgRating DESC;
+
+		SELECT n.title, t.avgRating
+		FROM topMovieIDs t JOIN names n ON t.movieID = n.movieID;
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Integrating MySQL with Hadoop
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------		
+	Using Sqoop to connect to MySQL from Hadoop cluster, and, import data to, or export data from Hadoop cluster. 
+	Sqoop can handle Big Data 
+	
+			---------------------------
+			MySql / PostGres / whatever 
+			---------------------------
+			Mapper | Mapper | Mapper |
+			---------------------------
+					HDFS
+			---------------------------
+		Actually kicks off  MapReduce jobs to handle importing or exporting your data. 
+	
+	Command: to import data from MySQL to HDFS 
+		sqoop import --connect jdbc:mysql://localhost/movielens --driver com.mysql.jdbc.Driver --table movies 
+	
+	Command: to import data from MySQL to Hive 
+		sqoop import --connect jdbc:mysql://localhost/movielens --driver com.mysql.jdbc.Driver --table movies --hive import 
+	
+	Command: to export data from Hive into MySQL 
+		sqoop export --connect jdbc:mysql://localhost/movielens -m 1 --driver com.mysql.jdbc.Driver --table exported_movies --export-dir /apps/hive/warehouse/movies --input-fields-terminated-by '\0001'
+		
+		Note: 
+			a. target table must already exist in MySQL, with columns in expected order 
+			b. "m" : this is the number of mappers to be used in the export/import operation. 
+	
+	Incremental Imports: 
+		1. Keep RDBMS and Hadoop in sync 
+		2. --check-column and --last-value 
+		
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Activity – Installing MySQL and Importing Movie Data
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------		
+	MySQL comes installed already with HortonWorks sandbox. 
+	
+	1. mysql -u root -p 
+		default password is 'hadoop"
+		
+		Note: 
+			on newer HDP sandboxes, mysql's root account has no default password. You need to set one up the hard way first. If the password "hadoop" did not work, enter the following commands: 
+			
+			su root 
+			systemctl stop mysqld 
+			systemctl set-environment MYSQLD_OPTS="--skip-grant-tables --skip-networking"
+			systemctl start mysqld 
+			mysql -uroot
+			
+			Then, in the SQL shell, run: 
+			
+			FLUSH PRIVILEGES; 
+			ALTER USER 'root'@'localhost' IDENTIFIED BY 'hadoop';
+			FLUSH PRIVILEGES;
+			QUIT;
+			
+			Back at the shell, run: 
+			
+			systemctl unset-environment MYSQLD_OPS 
+			systemctl restart mysqld
+			exit 
+			
+			Now you should be able to successfully connect with:
+			mysql -uroot -phadoop
+	
+	2. 	Start by creating some movie lens database, and then, we will import some data from movie lens 
+		
+		a. 	query/command: CREATE DATABASE movielens;
+				This will create the movielens database. 
+		
+		b. 	query/command: SHOW DATABASES;
+				This will display all applicable databases. 
+		
+		c. 	query/command: exit; 
+				Now that the database is ready, we can exit and download the data from movielens website or from any other publich repository. 
+		
+		d.	query/command: wget http://media.sundog-soft.com/hadoop/movielens.sql
+				This is a large file, which contains table creation and data insert scripts. 
+		
+		e.	Now log back in to mysql 
+			query/command: 	mysql -u root -p 
+								password is 'hadoop"
+		
+		f.	the data is in UTF8 format, to accomodate internationalization. So, we need to let the database know that such is the setup 
+			query/command: SET NAMES 'utf8';
+			query/command: SET CHARACTER SET utf8;
+		
+		g.	query/command: use movielens;
+				This will signal the database that we want to use the database movielens created earlier. 
+		
+		h.	query/command: source movielens.sql
+				This will help execute the movielens.sql, thereby creating tables and inserting data. 
+		
+		i.	query/command: show tables; 
+				This will help display all the tables in play. 
+		
+		j.	query/command: select * from movies limit 10; 
+				This will display the first 10 rows of the movies table. 
+		
+		k.	To find the top rated movies:  
+				query/command: SELECT movies.title, count(ratings.movie_id) as ratingCount FROM  movies INNER JOIN ratings ON movies.id = ratings.movie_id GROUP BY movies.title HAVING count(ratings.movie_id) > 100 ORDER BY ratingCount ;
+				
+			
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Activity - Using Sqoop to Import Data from MySQL to HFDS/Hive
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------	
+	
+	Before we can import data from MySQL Data into Hive/HDFS, we need to provide appropriate permissions so that it is accessable. 
+	1. 	Login to mysql 
+			query/command: mysql -uroot -phadoop
+	
+	2. 	Then type the following to assign the required privileges. 
+			query/command: GRANT ALL PRIVILEGES ON movielens.* TO root@localhost IDENTIFIED BY 'hadoop';
+	
+	3. 	Now, exit from mysql to run sqoop. 
+			query/command: exit 
+	
+	4.	Now, execute the following query: 
+			This will run only 1 mapper. 
+			In real world, this "-m" option will be off, and this will allow HDFS to parallelize the operation. 
+			
+			Suggested query/command: 
+				sqoop import --connect jdbc:mysql://localhost/movielens --driver com.mysql.jdbc.Driver --table movies -m1 1 --username root --password hadoop 
+			Actual query/command:
+				sqoop import --connect jdbc:mysql://localhost/movielens --driver com.mysql.jdbc.Driver --table movies --username root --password hadoop 
+				OR 
+				sqoop import --connect jdbc:mysql://localhost/movielens --driver com.mysql.jdbc.Driver --table movies --username root --password hadoop -m 1
+			
+			The Actual query/command worked. The suggested command had the mapper information which is no longer required, and when provided was resulting in error. 
+	
+	5.	As per the lecture, the data is supposed to be created under maria_dev. However, for me, as I used root username, it got created under root directory. 
+		Ambari -> Files view -> user -> root.
+		Here, there will be a new directory called "movies". 
+		Here, we can also see, that there are 4 files output. 
+			part-m-00000
+			part-m-00001
+			part-m-00002
+			part-m-00003
+		By default 4 mapper were picked up by the hdfs. Each contain section of movie data that has been imported from movies table in mysql. 
+		There is also a _SUCCESS file, indicating that the map-reduce jobs are now complete.
+		
+		if mapper is set to 1, then there is 1 part file, i.e. part-m-00000
+		
+		This file could be distributed across many clusters/nodes and backedup. 
+		
+	6.	This folder under root can be deleted, because, we will import straight into Hive. 
+		Command: to import data from MySQL to Hive 
+			sqoop import --connect jdbc:mysql://localhost/movielens --driver com.mysql.jdbc.Driver --table movies --username root --password hadoop --hive-import -m 1
+		
+		This might give some error. However, when checked under Hive View, default database, we can see the movies table. 
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Activity – Using Sqoop to Export Data from Hadoop to MySQL
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	
+	
+	
+		
